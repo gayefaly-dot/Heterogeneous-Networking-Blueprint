@@ -1,0 +1,242 @@
+#apiVersion: v1
+#kind: Namespace
+#metadata:
+#  name: digitafrica
+
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: "{{ digitafrica_namespace }}"
+type: Opaque
+stringData:
+  POSTGRES_DB: {{ tier1.user_portal.postgres_db }}
+  POSTGRES_USER: {{ tier1.user_portal.postgres_user }}
+  POSTGRES_PASSWORD: {{tier1.user_portal.postgres_password }}
+
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-secret
+  namespace: "{{ digitafrica_namespace }}"
+type: Opaque
+stringData:
+  KC_DB_PASSWORD: keycloakpass
+  KC_BOOTSTRAP_ADMIN_USERNAME: "{{ tier1.user_portal.admin_user }}"
+  KC_BOOTSTRAP_ADMIN_PASSWORD: "{{ tier1.user_portal.admin_password }}"
+
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-config
+  namespace: "{{ digitafrica_namespace }}"
+data:
+  KC_DB: postgres
+  KC_DB_URL_HOST: postgres
+  KC_DB_URL_DATABASE: {{ tier1.user_portal.postgres_db }}
+  KC_DB_USERNAME: {{ tier1.user_portal.postgres_user }}
+  KC_DB_PASSWORD: {{ tier1.user_portal.postgres_password }}
+  KC_HTTP_ENABLED: "true"
+  KC_HOSTNAME_STRICT: "false"
+  KC_PROXY: edge
+  KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/certs/tls.crt
+  KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/certs/tls.key
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: "{{ digitafrica_namespace }}"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: "{{ digitafrica_namespace }}"
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          envFrom:
+            - secretRef:
+                name: postgres-secret
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: postgres-data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U keycloak -d keycloak
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: "{{ digitafrica_namespace }}"
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+
+
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: "{{ digitafrica_namespace }}"
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server","--appendonly","yes"]
+          volumeMounts:
+            - mountPath: /data
+              name: redis-data
+          readinessProbe:
+            exec:
+              command: ["redis-cli","ping"]
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: "{{ digitafrica_namespace }}"
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+
+
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: "{{ digitafrica_namespace }}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.5.0
+          args: ["start-dev", "--https-port=8443"]
+          #args: ["start-dev"]
+          envFrom:
+            - configMapRef:
+                name: keycloak-config
+            - secretRef:
+                name: keycloak-secret
+          ports:
+            - containerPort: 8443
+            - containerPort: 8080
+          volumeMounts:
+            - name: certs
+              mountPath: /opt/keycloak/certs
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /realms/master
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: certs
+          secret:
+            secretName: keycloak-certs
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: "{{ digitafrica_namespace }}"
+spec:
+  type: NodePort
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: {{ tier1.user_portal.http_nodeport | int }}
+    - name: https
+      port: 8443
+      targetPort: 8443
+      nodePort: {{ tier1.user_portal.https_nodeport | int }}

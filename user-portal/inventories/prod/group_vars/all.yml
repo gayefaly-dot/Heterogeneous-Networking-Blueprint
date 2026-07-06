@@ -1,0 +1,24 @@
+# Common
+tier1_enable_k3s: true
+
+digitafrica_namespace: "digitafrica"
+
+tls_mode: "selfsigned"   # or "letsencrypt" or "provided"
+
+tls_domains:
+  - "user-portal.digitafrica.eu"
+
+tls_workdir: "/opt/digitafrica/tls"
+tls_selfsigned_days: 3650
+
+# Tier1
+tier1:
+  # User-portal
+  user_portal:
+    http_nodeport: 30080              # nodeport for HTTP
+    https_nodeport: 30443             # nodeport for HTTPS
+    admin_user: "admin"               # Administrator username
+    admin_password: "admin"           # Administrator password 
+    postgres_db: keycloak             # PostgreSQL database name
+    postgres_user: keycloak           # PostgreSQL user name
+    postgres_password: keycloakpass   # PostgreSQL password

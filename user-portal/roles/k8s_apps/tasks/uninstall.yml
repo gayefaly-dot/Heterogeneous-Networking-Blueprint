@@ -1,0 +1,6 @@
+- name: Remove {{ digitafrica_namespace }} namespace
+  ansible.builtin.shell: |
+    k3s kubectl delete namespace {{ digitafrica_namespace }} --ignore-not-found
+  args:
+    executable: /bin/bash
+  ignore_errors: true

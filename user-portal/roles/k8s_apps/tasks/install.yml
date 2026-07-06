@@ -1,0 +1,101 @@
+- name: Ensure manifest dir exists
+  ansible.builtin.file:
+    path: /opt/digitafrica/k8s
+    state: directory
+    mode: "0755"
+  when: tier1_enable_k3s | bool
+
+- name: Render KC k8s
+  ansible.builtin.template:
+    src: templates/kc.yaml.j2
+    dest: /opt/digitafrica/k8s/kc.yaml
+    mode: "0644"
+  when: tier1_enable_k3s | bool
+
+- name: Ensure namespace exists
+  ansible.builtin.shell: |
+    set -e
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+    k3s kubectl get ns {{ digitafrica_namespace }} >/dev/null 2>&1 || k3s kubectl create ns {{ digitafrica_namespace }}
+  args:
+    executable: /bin/bash
+  when: tier1_enable_k3s | bool
+
+- name: Cleanup previous manual Keycloak resources (best-effort)
+  ansible.builtin.shell: |
+    set -e
+    k3s kubectl -n {{ digitafrica_namespace }} delete all,cm,secret,role,rolebinding,sa \
+      -l app=keycloak --ignore-not-found || true
+  args:
+    executable: /bin/bash
+  when: tier1_enable_k3s | bool
+
+- name: Cleanup previous manual Keycloak resources (best-effort) - secret
+  ansible.builtin.shell: |
+    set -e
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+    kubectl delete secret keycloak-secret --namespace {{ digitafrica_namespace }} --ignore-not-found=true
+  args:
+    executable: /bin/bash
+  become: true
+
+- name: Ensure certs dir exists
+  ansible.builtin.file:
+    path: "{{ tls_workdir }}"
+    state: directory
+    mode: "0755"
+  when: tier1_enable_k3s | bool
+
+- name: Create certificate
+  ansible.builtin.shell: |
+    set -e
+    openssl req -x509 -newkey rsa:2048 -sha256 -days {{ tls_selfsigned_days }} -nodes -keyout {{ tls_workdir }}/keycloak.key   -out {{ tls_workdir }}/keycloak.crt   -subj "/CN={{ tls_domains[0] }}"   -addext "subjectAltName=DNS:{{ tls_domains | join(',DNS:') }}"   
+  args:
+    executable: /bin/bash
+  when: tls_mode == "selfsigned"
+  become: true
+
+
+- name: Create TLS secret
+  ansible.builtin.shell: |
+    set -e
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+    kubectl create secret tls keycloak-certs --cert={{ tls_workdir }}/keycloak.crt --key={{ tls_workdir }}/keycloak.key -n digitafrica
+  args:
+    executable: /bin/bash
+  become: true
+
+- name: Install/upgrade Keycloak via kubectl 
+  ansible.builtin.shell: |
+    set -e
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+    kubectl --namespace {{ digitafrica_namespace }} create -f /opt/digitafrica/k8s/kc.yaml
+  args:
+    executable: /bin/bash
+  when: tier1_enable_k3s | bool
+
+- name: List resources created by Helm release (debug)
+  ansible.builtin.shell: |
+    set -e
+    k3s kubectl -n {{ digitafrica_namespace }} get deploy,sts,po,svc -o wide
+    echo "----"
+    helm -n {{ digitafrica_namespace }} status jhub || true
+  args:
+    executable: /bin/bash
+  become: true
+  changed_when: false
+
+- name: Wait for all Keycloak deployments from release to finish rolling out
+  ansible.builtin.shell: |
+    set -e
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+    kubectl wait --for=condition=Ready pod -l app=keycloak --timeout=300s --namespace {{ digitafrica_namespace }}
+  args:
+    executable: /bin/bash
+  become: true
+
+#- name: Show access URL (NodePort)
+#  ansible.builtin.debug:
+#    msg:
+#      - "Jupyter URL: http://{{ ansible_host | default(inventory_hostname) }}:{{ tier1_jupyter_nodeport }}"
+#  when: tier1_enable_k3s | bool
