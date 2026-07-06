@@ -1,0 +1,171 @@
+proxy:
+  service:
+    type: ClusterIP
+
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ digitafrica_namespace }}-jupyterhub-redirect-slash@kubernetescrd"
+{% set jhub_host = tier1.jhub.oidc.landing_page | urlsplit('hostname') %}
+{% if jhub_host | regex_search('^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$') %}
+  # Host is a raw IP — omit hosts field so Traefik matches all incoming requests
+{% else %}
+  hosts:
+    - {{ jhub_host }}
+{% endif %}
+
+hub:
+  baseUrl: /jupyter
+  config:
+    JupyterHub:
+      authenticator_class:  {{ "generic-oauth" if tier1.jhub.oidc.enabled | default(false) else "dummy" }}
+
+    DummyAuthenticator:
+      password: "{{ tier1.jhub.password }}"
+
+    GenericOAuthenticator:
+      client_id: "{{ tier1.jhub.oidc.client_id }}"
+      client_secret: "{{ tier1.jhub.oidc.client_secret }}"
+      authorize_url: "{{ tier1.jhub.oidc.issuer_url.rstrip('/') }}/protocol/openid-connect/auth"
+      token_url: "{{ tier1.jhub.oidc.issuer_url.rstrip('/') }}/protocol/openid-connect/token"
+      userdata_url: "{{ tier1.jhub.oidc.issuer_url.rstrip('/') }}/protocol/openid-connect/userinfo"
+      scope: {{ tier1.jhub.oidc.scope | to_json }}
+      username_claim: "{{ tier1.jhub.oidc.username_claim }}"
+      tls_verify: {{ tier1.jhub.oidc.tls_verify | default(true) }}
+      validate_server_cert: {{ tier1.jhub.oidc.tls_verify | default(true) }}
+      oauth_callback_url: "{{ tier1.jhub.oidc.landing_page }}/hub/oauth_callback"
+
+    Authenticator:
+      allow_all: true
+
+singleuser:
+  image:
+    name: jupyter/minimal-notebook
+    tag: "python-3.11"
+  defaultUrl: "/lab"
+
+  extraContainers:
+    - name: docker-dind
+      image: docker:27-dind
+      securityContext:
+        runAsUser: 0   # non-root
+        privileged: true
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      args: ["--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock"]
+      ports:
+        - containerPort: 2375
+          name: docker
+      volumeMounts:
+        - name: home
+          mountPath: /home/jovyan
+        - name: docker-config
+          mountPath: /etc/docker/
+  
+  image:
+    name: "{{ notebook_images.catalog[notebook_images.default_key].name }}"
+    tag: "{{ notebook_images.catalog[notebook_images.default_key].tag }}"
+
+  profileList:
+{% for key, img in notebook_images.catalog.items() %}
+    - display_name: "{{ img.label }}"
+      description: "Image: {{ img.name }}:{{ img.tag }}"
+      default: {{ (key == notebook_images.default_key) | to_json }}
+      kubespawner_override:
+        image: "{{ img.name }}:{{ img.tag }}"
+        image_pull_policy: IfNotPresent
+{% endfor %}
+    - display_name: "Custom Image"
+      description: "Specify your own container image"
+      kubespawner_override:
+        image_pull_policy: IfNotPresent
+      profile_options:
+        image:
+          display_name: "Container Image"
+          choices: {}
+          unlisted_choice:
+            enabled: true
+            display_name: "Custom image"
+            description: "Enter a full container image reference (e.g. ghcr.io/org/image:tag)"
+            validation_regex: "^.+:.+$"
+            validation_message: "Image must include a tag (e.g. repo/image:tag)"
+            kubespawner_override:
+              image: "{value}"
+  cpu:
+    limit: 2
+  memory:
+    limit: 2G
+
+  extraEnv:
+    MLFLOW_TRACKING_URI: "https://mlflow.digitafrica.eu"
+    DOCKER_HOST: "tcp://localhost:2375"
+
+  # Important for first spawn on k3s local-path (image pulls + PVC provisioning)
+  startTimeout: 900
+
+  #nodeSelector:
+  #   kubernetes.io/hostname: "digitafrica-edge-node1"
+
+  uid: 1000
+  extraPodConfig:
+    securityContext:
+      #supplementalGroups:
+      #  - 112
+
+  storage:
+    type: dynamic
+    capacity: 10Gi
+    dynamic:
+      storageClass: local-path
+      # Make the volume name predictable so initContainer can mount it
+      volumeNameTemplate: home
+
+    # ✅ Correct place to inject extra volumes/mounts into the user pod
+    extraVolumes:
+      - name: digitafrica-seed
+        hostPath:
+          path: /opt/digitafrica/k8s-notebooks
+          type: Directory
+      - name: docker-config
+        hostPath:
+          path: /opt/digitafrica/docker
+          type: Directory
+
+    extraVolumeMounts:
+      - name: digitafrica-seed
+        mountPath: /seed
+        readOnly: true
+
+
+  # ✅ Reliable: initContainers are supported by the chart
+  initContainers:
+    - name: seed-notebooks
+      image: alpine:3.20
+      command: ["sh", "-lc"]
+      args:
+        - |
+          set -e
+          echo "[seed] /seed content:"
+          ls -la /seed || true
+          mkdir -p /home/jovyan/digitafrica
+          # copy every time (overwrites same names)
+          cp -a /seed/. /home/jovyan/digitafrica/ 2>/dev/null || true
+          echo "[seed] /home/jovyan/digitafrica after copy:"
+          ls -la /home/jovyan/digitafrica | head -n 50 || true
+      volumeMounts:
+        - name: digitafrica-seed
+          mountPath: /seed
+          readOnly: true
+        # This is the user PVC mount, made predictable via volumeNameTemplate: home
+        - name: home
+          mountPath: /home/jovyan
+
+
+prePuller:
+  hook:
+    enabled: false
+  continuous:
+    enabled: true
+

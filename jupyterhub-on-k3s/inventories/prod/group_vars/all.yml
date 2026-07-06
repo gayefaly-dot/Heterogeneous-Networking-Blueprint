@@ -1,0 +1,73 @@
+# Common
+timezone: "Europe/Athens"
+tier1_enable_k3s: true
+
+digitafrica_namespace: "digitafrica"
+
+k3s_disable_traefik: false      # false = Traefik Ingress enabled | true = disabled (falls back to NodePort)
+k3s_disable_servicelb: "{{ not k3s_disable_traefik | bool }}"  # auto-derived: servicelb off when Traefik is on
+
+tls_mode: "selfsigned"   # or "letsencrypt" or "provided"
+
+tls_domains:
+  - "jupyter.digitafrica.eu"
+  - "tier0.digitafrica-edge-node1.eu"
+
+tls_workdir: "/opt/digitafrica/tls"
+tls_selfsigned_days: 3650
+
+tier1:
+  jhub:
+    http_nodeport: 30888
+    password: "digitafrica"
+    oidc:
+      enabled: true
+      issuer_url: "https://keycloak:8443/realms/digitafrica"
+      client_id: "jupyterhub-client"
+      client_secret: "wIlDfJQwsHBUb1zXFS6GHIFxeOsKw9UU"
+      scope:
+        - "openid"
+        - "profile"
+        - "email"
+      username_claim: "preferred_username"
+      tls_verify: false 
+      landing_page: "http://10.64.45.176/jupyter"
+
+
+notebook_images:
+  default_key: minimal
+  catalog:
+    minimal:
+      name: "jupyter/minimal-notebook"
+      tag: "python-3.11"
+      label: "minimal-notebook (Python)"
+    base:
+      name: "jupyter/base-notebook"
+      tag: "python-3.11"
+      label: "base-notebook (Python)"
+    scipy:
+      name: "jupyter/scipy-notebook"
+      tag: "python-3.11"
+      label: "scipy-notebook (SciPy/Pandas)"
+    datascience:
+      name: "jupyter/datascience-notebook"
+      tag: "python-3.11"
+      label: "datascience-notebook"
+    pyspark:
+      name: "jupyter/pyspark-notebook"
+      tag: "python-3.11"
+      label: "pyspark-notebook"
+    allspark:
+      name: "jupyter/all-spark-notebook"
+      tag: "python-3.11"
+      label: "all-spark-notebook"
+    r:
+      name: "jupyter/r-notebook"
+      tag: "python-3.11"
+      label: "r-notebook"
+    docker_tools:
+      #name: "dsaucez/rootless-docker"
+      name: "dsaucez/docker-docker"
+      tag: "latest"
+      label: "docker-tools-notebook (Docker CLI)"
+

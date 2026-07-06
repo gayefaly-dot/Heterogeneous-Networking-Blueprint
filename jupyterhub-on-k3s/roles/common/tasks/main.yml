@@ -1,0 +1,31 @@
+- name: Set timezone
+  ansible.builtin.timezone:
+    name: "{{ timezone }}"
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - git
+      - python3-pip
+      - python3-venv
+      - ufw
+    update_cache: true
+
+- name: Create digitafrica directory structure
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/digitafrica
+    - /opt/digitafrica/logs
+    - /opt/digitafrica/k8s-notebooks
+    - /opt/digitafrica/docker
+
+- name: Setup Docker daemon configuration
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /opt/digitafrica/docker/daemon.json
+  when: tier1.jhub.docker_cache is defined
