@@ -1,0 +1,9 @@
+mirrors:
+  "*":
+    endpoint:
+      - "{{ k3s_cache }}"
+configs:
+  "docker.io":
+  "*":
+    tls:
+      insecure_skip_verify: true

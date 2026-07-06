@@ -1,0 +1,38 @@
+- name: Set timezone
+  ansible.builtin.timezone:
+    name: "{{ timezone }}"
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - git
+      - python3-pip
+      - python3-venv
+      - ufw
+    update_cache: true
+
+- name: Create digitafrica directory structure
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/digitafrica
+    - /opt/digitafrica/logs
+
+- block:
+  - name: Ensure /etc/rancher/k3s/ directory exists
+    file:
+      path: /etc/rancher/k3s/
+      state: directory
+      mode: '0755'
+  - name: Configure containerd pull-through cache
+    template:
+      src: registries.yaml.j2
+      dest: /etc/rancher/k3s/registries.yaml
+      owner: root
+      group: root
+      mode: '0644'
+  when: k3s_cache is defined
